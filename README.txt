@@ -1,15 +1,18 @@
-Window (Powershell):
+## 🎮 Play Online
 
-cd "C:\Users\Bryan Chow\Documents\HKU\URBA 6009\my-hk-racer"   (your file path)
-py -m http.server 8000
-http://localhost:8000/Game.html
+You can try the game instantly—no download or local server needed:
 
-MacOS (Terminal):
+🔗 **Live Demo:**  
+https://chowhim14.github.io/my-hk-racer/
 
-cd "~/Documents/HKU/URBA 6009/my-hk-racer"         (your file path)
-python3 -m http.server 8000       or         python -m http.server 8000
-http://localhost:8000/Game.html
+---
 
+### How to Play
 
+1. Open your favorite web browser (Chrome, Firefox, Edge, Safari, etc.).  
+2. Navigate to the Live Demo link above.  
+3. Wait a few seconds for the assets to load.  
+4. Use **W A S D** or the **arrow keys** to steer your car.  
+5. Press **Space** to boost.  
 
-Find your file path by right click and copy as path 
+Enjoy racing through the streets—happy gaming!  
