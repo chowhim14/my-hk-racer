@@ -1,0 +1,792 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>HK Endless Racer</title>
+  <style>
+    body { margin:0; overflow:hidden; background:#000; }
+
+    /* Menu Styles */
+    #startMenu {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #000; /* Fallback background */
+        background-image: url('textures/Menu.jpg'); /* Ensure this file exists */
+        /* ADJUSTED: Background Size to Contain the Image */
+        background-size: contain;
+        background-repeat: no-repeat; /* Prevent tiling if image doesn't cover */
+        background-position: center;
+        display: flex; /* Use flexbox to center content */
+        flex-direction: column; /* Stack items vertically */
+        justify-content: center; /* Center vertically */
+        align-items: center; /* Center horizontally */
+        z-index: 10; /* Make sure it's on top of the game */
+        color: #fff;
+        font-family: sans-serif;
+        text-shadow: 2px 2px 4px #000;
+    }
+
+    /* Removed #menuTitle styles as the element is removed */
+    /* #menuTitle {
+        font-size: 48px;
+        margin-bottom: 30px;
+    } */
+
+    #startButton {
+        padding: 15px 30px;
+        font-size: 24px;
+        cursor: pointer;
+        background: rgba(0, 150, 255, 0.8); /* Semi-transparent blue */
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        transition: background 0.3s ease;
+        box-shadow: 3px 3px 8px rgba(0,0,0,0.5);
+         /* Adjusted margin-top if needed after removing title */
+         margin-top: 20px; /* Add some space above the button */
+    }
+
+    #startButton:hover {
+        background: rgba(0, 180, 255, 0.9); /* Slightly brighter blue on hover */
+    }
+
+    /* Game UI Styles */
+    #score { position:absolute; top:10px; left:10px; color:#fff; font:24px sans-serif; z-index:1; text-shadow: 2px 2px 4px #000; }
+    #instructions { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); color:#fff; font:16px sans-serif; z-index:1; text-shadow: 1px 1px 3px #000; }
+
+    /* UI Container for Speed and Nitro */
+    #gameUI {
+        position: absolute;
+        bottom: 20px;
+        right: 20px; /* Position on the right side */
+        display: flex; /* Use flexbox to align items */
+        align-items: flex-end; /* Align items to the bottom */
+        z-index: 2;
+    }
+
+    /* Speed Gauge Styling (Digital) */
+    #speedGauge {
+        color: #fff;
+        font: 36px sans-serif;
+        margin-right: 20px; /* Space between speed and nitro */
+        text-align: right; /* Align text to the right */
+        text-shadow: 2px 2px 4px #000;
+    }
+
+    /* Nitro Bar Styling */
+    #nitroBar {
+      width: 150px; /* Adjusted width */
+      height: 15px; /* Adjusted height */
+      background: rgba(51, 51, 51, 0.7); /* Semi-transparent background */
+      border: 1px solid #fff;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.5);
+      overflow: hidden; /* Ensure nitroLevel stays within bounds */
+    }
+
+    #nitroLevel {
+      height: 100%;
+      background: linear-gradient(to right, #0ff, #00aaff); /* Gradient for nitro */
+      transition: width 0.1s linear; /* Smooth transition for width change */
+    }
+  </style>
+  <script type="importmap">
+  {"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js"}}
+  </script>
+</head>
+<body>
+
+  <div id="startMenu">
+      <button id="startButton">Start Game</button>
+  </div>
+
+  <div id="score">Distance: 0m</div>
+  <div id="instructions">Use ← and → to change lanes, press Space for Nitro</div>
+  <div id="gameUI">
+      <div id="speedGauge">0 KPH</div>
+      <div id="nitroBar"><div id="nitroLevel"></div></div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.11.4/gsap.min.js"></script>
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+
+    const scene = new THREE.Scene();
+    const CAMERA_Y = 7; // Camera height
+    const CAMERA_Z_OFFSET = -12; // Camera distance behind player
+    const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 1000);
+    camera.position.set(0, CAMERA_Y, CAMERA_Z_OFFSET);
+    camera.lookAt(0, 2, 10);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(innerWidth, innerHeight);
+    document.body.appendChild(renderer.domElement);
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // Initial lighting (Daylight)
+    const hemisphereLight = new THREE.HemisphereLight(0xffffff, 0x444444, 1);
+    scene.add(hemisphereLight);
+
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    directionalLight.position.set(-3, 10, -10);
+    scene.add(directionalLight);
+
+    scene.background = new THREE.CubeTextureLoader()
+      .setPath('textures/skybox/') // Ensure these textures exist
+      .load(['px.jpg','nx.jpg','py.jpg','ny.jpg','pz.jpg','nz.jpg']);
+
+    const loaderGLTF = new GLTFLoader();
+    const models = {};
+    const modelScales = {
+      player: 1.5, taxi: 1.2, car: 1.2
+    };
+    const toLoad = { player: 'player-car', taxi: 'taxi', car: 'traffic' };
+    const loadPromises = Object.entries(toLoad).map(([key, folder]) => new Promise(resolve => {
+      loaderGLTF.load(`models/${folder}/scene.gltf`, (gltf) => { // Ensure models exist
+        models[key] = gltf.scene;
+        models[key].scale.setScalar(modelScales[key]);
+        resolve();
+      }, undefined, (error) => { // Added error callback
+          console.error(`Error loading model ${folder}:`, error);
+          resolve(); // Resolve promise even on error to not block others
+      });
+    }));
+
+    // --- Audio Setup ---
+    let audioContext;
+    let engineSoundSource;
+    let nitroSoundBuffer, crashSoundBuffer;
+    let backgroundSoundSource; // Added background sound source
+    // Added GainNodes for volume control
+    let engineGainNode;
+    let backgroundGainNode;
+
+    const soundsLoaded = { engine: false, nitro: false, crash: false, background: false };
+    let backgroundMusicStarted = false; // Flag to ensure music starts only once
+
+    // Function to initialize AudioContext and GainNodes on user interaction
+    function initAudio() {
+        if (audioContext) return; // Already initialized
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+        // Create GainNodes
+        engineGainNode = audioContext.createGain();
+        backgroundGainNode = audioContext.createGain();
+
+        // Set initial volume (75%)
+        engineGainNode.gain.value = 0.75;
+        backgroundGainNode.gain.value = 0.75;
+
+        // Connect GainNodes to destination
+        engineGainNode.connect(audioContext.destination);
+        backgroundGainNode.connect(audioContext.destination);
+
+        loadSounds();
+        // Removed document.body.dataset.interacted = "true"; as interaction will be handled by button click
+    }
+
+    // Function to load sounds using AudioContext
+    function loadSounds() {
+        if (!audioContext) return; // Need context first
+
+        const audioLoader = new THREE.AudioLoader();
+
+        // Engine Sound (Looping)
+        audioLoader.load('audio/engine.mp3', function(buffer) { // Ensure audio exists
+            engineSoundSource = audioContext.createBufferSource();
+            engineSoundSource.buffer = buffer;
+            engineSoundSource.loop = true;
+            // Connect source to GainNode instead of destination
+            engineSoundSource.connect(engineGainNode);
+            soundsLoaded.engine = true;
+            checkStartEngineSound(); // Try starting if conditions met
+        });
+
+        // Nitro Sound (One-shot)
+        audioLoader.load('audio/nitro.mp3', function(buffer) {
+            nitroSoundBuffer = buffer;
+            soundsLoaded.nitro = true;
+        });
+
+        // Crash Sound (One-shot)
+        audioLoader.load('audio/crash.mp3', function(buffer) {
+            crashSoundBuffer = buffer;
+            soundsLoaded.crash = true;
+        });
+
+        // Background Music (Looping)
+        audioLoader.load('audio/background.mp3', function(buffer) { // Load background music
+            backgroundSoundSource = audioContext.createBufferSource();
+            backgroundSoundSource.buffer = buffer;
+            backgroundSoundSource.loop = true; // Set to loop
+             // Connect source to GainNode instead of destination
+            backgroundSoundSource.connect(backgroundGainNode);
+            soundsLoaded.background = true;
+             // Start background music after initAudio is called (by button click)
+             if (!backgroundMusicStarted) {
+                 backgroundSoundSource.start(0);
+                 backgroundMusicStarted = true;
+            }
+        });
+    }
+
+     // Function to play one-shot sounds (these don't need individual volume control unless specified)
+     function playSound(buffer) {
+        if (!audioContext || !buffer || audioContext.state !== 'running') return;
+        const source = audioContext.createBufferSource();
+        source.buffer = buffer;
+        source.connect(audioContext.destination); // Direct to destination for full volume
+        source.start(0);
+    }
+
+    // Function to start engine sound if conditions met
+    function checkStartEngineSound() {
+        // Needs context, buffer loaded, game not crashed, player exists, and sound not already playing
+        // Also check if engineGainNode is created
+        if (audioContext && soundsLoaded.engine && !crashed && player && engineSoundSource && engineGainNode && !engineSoundSource.isPlaying) {
+             try {
+                // Check if source needs recreating (e.g., after stopping)
+                if (engineSoundSource.buffer && !engineSoundSource.isStarted) {
+                     engineSoundSource.start(0);
+                     engineSoundSource.isPlaying = true; // Custom flag
+                     engineSoundSource.isStarted = true; // Custom flag
+                 }
+             } catch (e) {
+                 console.error("Error starting engine sound:", e);
+                 // Might need to recreate the source node if it was stopped previously
+                 if (e.name === 'InvalidStateError') {
+                    const oldSource = engineSoundSource;
+                    engineSoundSource = audioContext.createBufferSource();
+                    engineSoundSource.buffer = oldSource.buffer;
+                    engineSoundSource.loop = true;
+                    // Reconnect recreated source to GainNode
+                    engineSoundSource.connect(engineGainNode);
+                    engineSoundSource.start(0);
+                    engineSoundSource.isPlaying = true;
+                    engineSoundSource.isStarted = true;
+                 }
+             }
+        }
+    }
+
+    // --- Game Assets ---
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(200, 600),
+      new THREE.MeshStandardMaterial({ color: 0x339933 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.15;
+    ground.position.z = 120;
+    scene.add(ground);
+
+    const roadTex = new THREE.TextureLoader().load('textures/road.jpg', t => { // Ensure texture exists
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      t.repeat.set(1, 50);
+    });
+    const roadMat = new THREE.MeshStandardMaterial({ map: roadTex });
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(18, 300), roadMat);
+    road.rotation.x = -Math.PI / 2;
+    road.rotation.z = Math.PI;
+    road.position.z = 120;
+    scene.add(road);
+
+    const sidewalkTex = new THREE.TextureLoader().load('textures/Sidewalk.jpg'); // Ensure texture exists
+    const sidewalkMat = new THREE.MeshStandardMaterial({ map: sidewalkTex });
+    const sidewalks = [];
+    for (let i = 0; i < 20; i++) {
+      [-11, 11].forEach(x => {
+        const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(4, 0.2, 30), sidewalkMat);
+        sidewalk.position.set(x, 0.1, i * 30);
+        scene.add(sidewalk);
+        sidewalks.push(sidewalk);
+      });
+    }
+
+    const buildingTex = new THREE.TextureLoader().load('textures/building.jpg'); // Ensure texture exists
+    const buildingMat = new THREE.MeshStandardMaterial({ map: buildingTex });
+    const buildingGeo = new THREE.BoxGeometry(6, 15, 6); // Original height 15
+    const buildings = [];
+    for (let i = 0; i < 40; i++) {
+      [-17, 17].forEach(x => {
+        const b = new THREE.Mesh(buildingGeo, buildingMat);
+        b.position.set(x, 7.5, i * 15); // Original vertical position 7.5
+        scene.add(b);
+        buildings.push(b);
+      });
+    }
+
+    // ADDED: Tree Geometry and Material (simple trees)
+    const trunkGeo = new THREE.CylinderGeometry(0.5, 0.7, 5, 8); // Trunk
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // Brown
+    const leavesGeo = new THREE.ConeGeometry(2, 4, 8); // Simple cone for leaves
+    const leavesMat = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // Forest Green
+
+    const trees = [];
+    // ADJUSTED: Increased tree spacing for fewer trees overall
+    const treeSpacing = 40; // Increased from 30 to 40
+    // ADJUSTED: Horizontal offset for trees (slightly further outwards)
+    const treeOffsetX = 10; // Increased from 9.5 to 10
+
+    // *** ADJUSTED: Reduced number of trees created initially by half ***
+    const initialTreePairs = 4; // Reduced from 8 to 4
+    for (let i = 0; i < initialTreePairs; i++) {
+        // Left side trees
+        const trunkLeft = new THREE.Mesh(trunkGeo, trunkMat);
+        const leavesLeft = new THREE.Mesh(leavesGeo, leavesMat);
+        leavesLeft.position.y = 4.5; // Position leaves above trunk
+        const treeLeft = new THREE.Group(); // Group trunk and leaves
+        treeLeft.add(trunkLeft);
+        treeLeft.add(leavesLeft);
+        treeLeft.position.set(-treeOffsetX, 2.5, i * treeSpacing); // Position tree
+
+        scene.add(treeLeft);
+        trees.push(treeLeft);
+
+        // Right side trees
+        const trunkRight = new THREE.Mesh(trunkGeo, trunkMat);
+        const leavesRight = new THREE.Mesh(leavesGeo, leavesMat);
+        leavesRight.position.y = 4.5;
+        const treeRight = new THREE.Group();
+        treeRight.add(trunkRight);
+        treeRight.add(leavesRight);
+        treeRight.position.set(treeOffsetX, 2.5, i * treeSpacing); // Position tree
+
+        scene.add(treeRight);
+        trees.push(treeRight);
+    }
+
+    // *** ADDED: Lamp Post Geometry, Material, and Light ***
+    const lampPostTrunkGeo = new THREE.CylinderGeometry(0.1, 0.15, 8, 8); // Slimmer, taller post
+    const lampPostTrunkMat = new THREE.MeshStandardMaterial({ color: 0x555555 }); // Dark grey
+    const lampHeadGeo = new THREE.SphereGeometry(0.4, 16, 8); // Small sphere for light source visual
+    const lampHeadMat = new THREE.MeshBasicMaterial({ color: 0xffff00, transparent: true, opacity: 0.8 }); // Yellowish light visual
+
+    const lampPosts = [];
+    const lampLights = [];
+    // Lamp post spacing based on tree spacing
+    const lampPostSpacing = treeSpacing * 2; // 40 * 2 = 80
+    const lampPostOffsetX = 11.5; // Position lamp posts just outside the sidewalk
+
+    // Lamp post count remains the same
+    const initialLampPostPairs = 10; // Kept at 10 pairs (20 total)
+    for (let i = 0; i < initialLampPostPairs; i++) {
+        // Left side
+        const lampPostLeft = new THREE.Mesh(lampPostTrunkGeo, lampPostTrunkMat);
+        const lampHeadLeft = new THREE.Mesh(lampHeadGeo, lampHeadMat);
+        lampHeadLeft.position.y = 4; // Position head at top of 8 unit post (center is 4 units up)
+        const lampGroupLeft = new THREE.Group(); // Group post and head
+        lampGroupLeft.add(lampPostLeft);
+        lampGroupLeft.add(lampHeadLeft);
+        lampGroupLeft.position.set(-lampPostOffsetX, 4, i * lampPostSpacing); // Position group (base on ground)
+        scene.add(lampGroupLeft);
+        lampPosts.push(lampGroupLeft);
+
+        const pointLightLeft = new THREE.PointLight(0xffa500, 0, 30); // Color and initial intensity 0, distance 30
+        pointLightLeft.position.copy(lampGroupLeft.position).add(new THREE.Vector3(0, 4, 0)); // Position light at lamp head
+        scene.add(pointLightLeft);
+        lampLights.push(pointLightLeft);
+
+
+        // Right side
+        const lampPostRight = new THREE.Mesh(lampPostTrunkGeo, lampPostTrunkMat);
+        const lampHeadRight = new THREE.Mesh(lampHeadGeo, lampHeadMat);
+        lampHeadRight.position.y = 4;
+        const lampGroupRight = new THREE.Group();
+        lampGroupRight.add(lampPostRight);
+        lampGroupRight.add(lampHeadRight);
+        lampGroupRight.position.set(lampPostOffsetX, 4, i * lampPostSpacing);
+        scene.add(lampGroupRight);
+        lampPosts.push(lampGroupRight);
+
+        const pointLightRight = new THREE.PointLight(0xffa500, 0, 30);
+        pointLightRight.position.copy(lampGroupRight.position).add(new THREE.Vector3(0, 4, 0));
+        scene.add(pointLightRight);
+        lampLights.push(pointLightRight);
+    }
+
+
+    // --- Game State Variables ---
+    const decor = { vehicles: [] }; // Keep vehicles in decor for filtering
+    const lanes = [-6, 0, 6];
+    let currentLane = 1, distance = 0, spawnTimer = Infinity;
+    let player, isNitro = false, crashed = false, flame = null; // flame initialized to null
+    let nitro = 100;
+    const scoreEl = document.getElementById('score');
+    const nitroLevelEl = document.getElementById('nitroLevel');
+    const speedGaugeEl = document.getElementById('speedGauge');
+
+    // Variables for time of day simulation
+    const dayDuration = 60; // Duration of a full day/night cycle in seconds
+    const dayLightColor = new THREE.Color(0xffffff); // White light for day
+    const nightLightColor = new THREE.Color(0x404080); // Bluish light for night
+    const dayLightIntensity = 0.8;
+    const nightLightIntensity = 0.2;
+    const dayHemiColor = new THREE.Color(0xffffff);
+    const nightHemiColor = new THREE.Color(0x202060); // Darker bluish ambient at night
+    const dayHemiIntensity = 1;
+    const nightHemiIntensity = 0.4;
+    const daySkyColor = new THREE.Color(0xa0a0ff); // Light blue sky
+    const nightSkyColor = new THREE.Color(0x05051a); // Very dark blue/black sky
+
+    // Lamp post light intensity control variables
+    const maxLampIntensity = 3; // Max brightness of lamp posts
+    const lampFadeThreshold = 0.2; // Start fading lamps when time is within this range of 0 or 1
+
+
+    // --- Game Logic Functions ---
+    function tryLoadPlayer() {
+      if (models.player) {
+        player = models.player.clone();
+        player.position.set(lanes[currentLane], 1, 0);
+        scene.add(player);
+
+        // Create Nitro Flame Mesh
+        const flameGeo = new THREE.ConeGeometry(0.2, 0.8, 16); // Made slightly longer
+        const flameMat = new THREE.MeshBasicMaterial({
+            color: 0x00aaff, // Slightly different blue
+            transparent: true,
+            opacity: 0.7,
+            premultipliedAlpha: true // Helps with blending
+         });
+        flame = new THREE.Mesh(flameGeo, flameMat); // Assignment to the already declared flame variable
+        flame.rotation.set(-Math.PI / 2, 0, 0); // Point backwards
+        flame.visible = false;
+        scene.add(flame); // Add flame to the main scene
+
+        spawnTimer = 1.5; // Initial spawn delay
+        checkStartEngineSound(); // Try starting if conditions met
+
+      } else {
+        setTimeout(tryLoadPlayer, 200);
+      }
+    }
+
+    function spawnVehicle() {
+      if (!player) return;
+      // Increased chance to spawn vehicle with distance
+      // Chance increases from 75% up to 98% at 800m.
+      const chance = Math.min(0.75 + distance / 800, 0.98); // Adjusted divisor for steeper increase
+      if (Math.random() > chance) return;
+
+      let type = Math.random() < 0.3 ? 'taxi' : 'car';
+      const v = models[type]?.clone() ?? new THREE.Mesh(
+        new THREE.BoxGeometry(2, 2, 4), new THREE.MeshStandardMaterial({ color: 0x888888 })
+      );
+
+      const li = THREE.MathUtils.randInt(0, 2);
+      v.userData.laneIndex = li;
+      // ADJUSTED: Vertical position of spawned vehicles
+      v.position.set(lanes[li], 0.1, player.position.z + 100); // Adjusted Y from 1 to 0.1
+      v.userData.isVehicle = true;
+      scene.add(v);
+      decor.vehicles.push(v);
+    }
+
+    // --- Event Listeners (Game Controls) ---
+    window.addEventListener('keydown', e => {
+        if (crashed || !player) return;
+        if (e.key === 'ArrowLeft' && currentLane < lanes.length - 1) {
+            currentLane++;
+            gsap.to(player.position, { x: lanes[currentLane], duration: 0.2 });
+        }
+        if (e.key === 'ArrowRight' && currentLane > 0) {
+            currentLane--;
+            gsap.to(player.position, { x: lanes[currentLane], duration: 0.2 });
+        }
+        if (e.key === ' ' && nitro > 0 && !isNitro) {
+            isNitro = true;
+            playSound(nitroSoundBuffer); // Play nitro sound using Web Audio
+        }
+    });
+    window.addEventListener('keyup', e => {
+      if (e.key === ' ') isNitro = false;
+    });
+
+    // *** ADDED: Game Initialization Function ***
+    function initializeGame() {
+        console.log("Initializing game...");
+
+        // Hide the start menu
+        document.getElementById('startMenu').style.display = 'none';
+
+        // Initialize Audio context first on user interaction
+        initAudio();
+
+        // Load models and then set up the game
+        Promise.all(loadPromises).then(() => {
+            console.log("Models loaded, setting up scene...");
+            tryLoadPlayer(); // Load player model and flame
+            // Initial creation of scenery elements
+            // Trees and lamp posts are already created globally, just need to start updating/recycling them
+
+            animate(); // Start game loop
+        }).catch(error => {
+            console.error("Error loading models:", error);
+            // Attempt to run anyway if some models failed to load
+            tryLoadPlayer(); // Try anyway, might use fallback boxes if models failed
+            animate();
+        });
+
+        // Ensure game UI is visible (if it was initially hidden)
+        // document.getElementById('score').style.display = 'block'; // Example
+        // document.getElementById('gameUI').style.display = 'flex'; // Example
+    }
+
+    // *** ADDED: Event Listener for Start Button ***
+    document.getElementById('startButton').addEventListener('click', initializeGame);
+
+
+    // --- Main Animation Loop ---
+    const clock = new THREE.Clock();
+    // The animate function will now be called from initializeGame()
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      // Increased speed increase rate and higher initial speed
+      const baseSpeed = 80 + distance / 20; // Higher initial speed, increases more rapidly
+      const speed = isNitro && nitro > 0 && !crashed ? baseSpeed * 2 : baseSpeed;
+
+      // Update time of day and lighting
+      const time = (clock.elapsedTime % dayDuration) / dayDuration; // Time of day normalized [0, 1]
+
+      // Interpolate global light colors and intensity
+      hemisphereLight.color.lerpColors(dayHemiColor, nightHemiColor, Math.sin(time * Math.PI));
+      hemisphereLight.groundColor.lerpColors(new THREE.Color(0x444444), new THREE.Color(0x101020), Math.sin(time * Math.PI));
+      hemisphereLight.intensity = THREE.MathUtils.lerp(dayHemiIntensity, nightHemiIntensity, Math.abs(Math.sin(time * Math.PI)));
+
+      directionalLight.color.lerpColors(dayLightColor, nightLightColor, Math.sin(time * Math.PI));
+      directionalLight.intensity = THREE.MathUtils.lerp(dayLightIntensity, nightLightIntensity, Math.abs(Math.sin(time * Math.PI)));
+
+       // Adjust directional light position for sun/moon
+      const lightAngle = time * Math.PI * 2; // Full circle rotation
+      directionalLight.position.set(
+        -10 * Math.cos(lightAngle), // X changes based on angle
+        10 * Math.sin(lightAngle), // Y changes based on angle (height)
+        -10 // Z remains constant
+      );
+      // We need to add camera position if we want the light to follow the player,
+      // but the light's effect range might need adjustment too.
+      // Let's keep the light position fixed for simplicity with scene lights for now,
+      // it acts more like a distant sun/moon. Remove the add(camera.position) line.
+      // directionalLight.position.add(camera.position); // Removed this line
+
+
+       // Interpolate background color (simple sky color change)
+      if (scene.background instanceof THREE.Color) {
+           scene.background.lerpColors(daySkyColor, nightSkyColor, Math.sin(time * Math.PI));
+       }
+
+
+      // Update lamp post positions and light intensity
+      lampPosts.forEach((lampPost, index) => {
+        if (!crashed) {
+            lampPost.position.z -= dt * (speed * 0.5); // Move lamp post mesh
+            // Move the corresponding light source with the mesh
+            lampLights[index].position.copy(lampPost.position).add(new THREE.Vector3(0, 4, 0)); // Adjust Y offset for light position
+
+            // If lamp post goes behind the player, move it forward
+            if (player && lampPost.position.z < player.position.z - 60) {
+                // CORRECTED: Recycling distance based on initial count and spacing
+                lampPost.position.z += initialLampPostPairs * lampPostSpacing; // Move ahead by initial number of pairs * spacing
+            }
+             // Update the corresponding light's position as well after recycling
+            lampLights[index].position.copy(lampPost.position).add(new THREE.Vector3(0, 4, 0));
+        }
+
+        // Control lamp light intensity based on time of day
+        // The light should be brightest around time = 0.5 (middle of the "night")
+        // and dim/off around time = 0 and time = 1 (daylight).
+        let lampIntensity = 0;
+        // Increase intensity as it gets darker (time moves away from 0 and 1 towards 0.5)
+        // Use a factor based on how far time is from the closest "day" edge (0 or 1)
+        const darknessFactor = 1.0 - Math.max(0, (Math.abs(time - 0.5) - (0.5 - lampFadeThreshold)) / lampFadeThreshold);
+        lampIntensity = maxLampIntensity * Math.max(0, darknessFactor); // Ensure intensity is not negative
+
+        lampLights[index].intensity = lampIntensity;
+        // Also make the lamp head visual brighter when the light is on
+        // Base opacity slightly higher than 0.2 when light is off, max at 0.8
+        lampPost.children[1].material.opacity = THREE.MathUtils.lerp(0.3, 0.8, lampIntensity / maxLampIntensity); // Adjusted base opacity
+
+
+      });
+
+
+      if (!crashed && player) {
+        // Nitro Fuel Management
+        if (isNitro && nitro > 0) nitro -= dt * 30;
+        else if (!isNitro && nitro < 100) nitro += dt * 15;
+        nitro = Math.max(0, Math.min(100, nitro));
+        nitroLevelEl.style.width = `${nitro}%`; // Use renamed element
+
+        // Update Speed Gauge
+        speedGaugeEl.textContent = `${Math.floor(speed)} KPH`;
+
+        // Road Texture Scrolling
+        roadMat.map.offset.y -= dt * (speed / 120);
+
+        // Distance Score
+        distance += dt * (speed / 6);
+        scoreEl.textContent = `Distance: ${Math.floor(distance)}m`;
+
+        // Vehicle Spawning
+        spawnTimer -= dt;
+        if (spawnTimer <= 0) {
+          // Shorter spawn interval with distance for more traffic
+          spawnTimer = Math.max(0.15, 1.0 - distance / 1000); // Adjusted values for denser traffic
+          spawnVehicle();
+        }
+
+        // Ensure engine sound is playing if conditions are met
+        checkStartEngineSound();
+
+      } else if (crashed && engineSoundSource && engineSoundSource.isPlaying) {
+          // Stop engine sound on crash
+          try {
+             engineSoundSource.stop();
+             engineSoundSource.isPlaying = false; // Update custom flag
+          } catch(e) { console.error("Error stopping engine sound:", e); }
+          // Stop background music on crash
+          if (backgroundSoundSource && backgroundSoundSource.isPlaying) {
+             try {
+                backgroundSoundSource.stop();
+                backgroundSoundSource.isPlaying = false; // Update custom flag
+             } catch(e) { console.error("Error stopping background music:", e); }
+          }
+           // ADDED: Turn off all lamp lights on crash
+          lampLights.forEach(light => light.intensity = 0);
+          lampPosts.forEach(post => post.children[1].material.opacity = 0.3); // Set lamp head visual to dim
+      }
+
+      // --- Nitro Flame Update ---
+      // Ensure flame is not null before accessing its properties
+      if (flame && player) {
+          flame.visible = isNitro && nitro > 0 && !crashed; // Set visibility
+          if (flame.visible) {
+              // Adjusted flame position to the rear middle - experiment with these values
+              // based on your car model. Slightly lower Y and further negative Z.
+              // Adjusted Y offset further upward again
+              const flameOffset = new THREE.Vector3(0, 0.6, -3.2); // Moved Y upward to 0.6
+              flameOffset.applyQuaternion(player.quaternion); // Rotate offset to match car orientation
+              flame.position.copy(player.position).add(flameOffset);
+
+              // Match flame rotation to player car + correction
+              flame.quaternion.copy(player.quaternion);
+              flame.rotateX(-Math.PI / 2); // Points cone backwards relative to car
+
+              // Add flickering effect to scale
+              const flicker = 1 + Math.sin(clock.elapsedTime * 40) * 0.15; // Faster flicker
+              flame.scale.set(flicker, flicker, flicker);
+          }
+      }
+
+
+      // --- Traffic Vehicle Update ---
+      decor.vehicles = decor.vehicles.filter(v => v.parent); // Keep only vehicles still in the scene
+      decor.vehicles.forEach((v) => {
+        if (!crashed && player) {
+          v.position.z -= dt * speed; // Move vehicles
+
+          // --- Collision Detection ---
+          // Using THREE.Box3 for potentially more accurate collision
+          const playerBox = new THREE.Box3().setFromObject(player);
+          const vehicleBox = new THREE.Box3().setFromObject(v);
+          if (playerBox.intersectsBox(vehicleBox)) {
+              crashed = true;
+              playSound(crashSoundBuffer); // Play crash sound
+              // Engine sound stop is handled above based on 'crashed' flag
+              // Nitro sound stops naturally as it's one-shot
+
+              // Simple explosion effect
+              const fireMat = new THREE.MeshBasicMaterial({ color: 0xff2200, transparent: true, opacity: 0.8 });
+              const fireGeo = new THREE.SphereGeometry(0.5, 16, 16);
+              const fire = new THREE.Mesh(fireGeo, fireMat);
+              fire.position.copy(player.position).add(new THREE.Vector3(0,1,0));
+              scene.add(fire);
+              gsap.to(fire.scale, { x: 5, y: 5, z: 5, duration: 0.3});
+              gsap.to(fire.material, { opacity: 0, duration: 0.3, delay: 0.1, onComplete: () => scene.remove(fire) });
+
+              // Game Over
+              setTimeout(() => {
+                alert(`💥 Crash! Game Over!\nDistance: ${Math.floor(distance)}m`);
+                window.location.reload();
+              }, 500);
+          }
+        }
+
+        // Remove vehicles far behind the player
+        if (player && v.position.z < player.position.z - 20) {
+          scene.remove(v);
+        }
+      }); // End vehicle loop
+
+      // --- Scenery & Camera Update ---
+      if (player) {
+          const playerZ = player.position.z;
+          camera.position.z = playerZ + CAMERA_Z_OFFSET; // Camera follows player Z
+
+          if (!crashed) {
+            // Scenery movement
+            buildings.forEach(b => {
+              b.position.z -= dt * (speed * 0.5);
+              if (b.position.z < playerZ - 60) b.position.z += 600;
+            });
+            sidewalks.forEach(s => {
+              s.position.z -= dt * (speed * 0.5);
+              if (s.position.z < playerZ - 60) s.position.z += 600;
+            });
+
+            // ADDED: Tree movement and recycling
+            trees.forEach(tree => {
+                tree.position.z -= dt * (speed * 0.5); // Trees move at same speed as other scenery
+                // If tree goes behind the player, move it forward
+                if (player && tree.position.z < player.position.z - 60) {
+                     // CORRECTED: Recycling distance based on initial count and spacing
+                    tree.position.z += initialTreePairs * treeSpacing; // Move ahead by initial number of pairs * spacing
+                }
+            });
+
+
+            // Camera Shake / Follow
+            if (isNitro) {
+                camera.position.x = player.position.x + Math.sin(clock.elapsedTime * 50) * 0.05;
+                camera.position.y = CAMERA_Y + Math.cos(clock.elapsedTime * 45) * 0.05;
+            } else {
+                gsap.to(camera.position, { x: player.position.x, y: CAMERA_Y, duration: 0.5 });
+            }
+          } else {
+              // If crashed, stop camera smoothing/shaking
+              camera.position.x = player.position.x;
+              camera.position.y = CAMERA_Y;
+          }
+          // Camera LookAt
+          camera.lookAt(player.position.x, 2, player.position.z + 30);
+
+      } else {
+          camera.lookAt(0, 2, 10); // Fallback before player loads
+      }
+
+      renderer.render(scene, camera);
+    } // End animate loop
+
+    // --- Initialization ---
+    // Game initialization now waits for the start button click
+    // Promise.all(loadPromises).then(() => {
+    //   tryLoadPlayer();
+    //   animate();
+    // }).catch(error => {
+    //     console.error("Error loading models:", error);
+    //     tryLoadPlayer();
+    //     animate();
+    // });
+
+
+  </script>
+</body>
+</html>
